@@ -1,0 +1,21 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font: 16px/1.5 system-ui, 'Segoe UI', Roboto, sans-serif;
+  color: #e2e8f0;
+  background: #04070d;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+#root {
+  min-height: 100svh;
+  width: 100%;
+  display: grid;
+  place-items: center;
+}
