@@ -89,11 +89,14 @@ async function requestReply(message, history) {
 
     const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      console.error(
-        `[chat] ${API_ENDPOINT} returned ${response.status}. Body:`,
-        data?.error ?? JSON.stringify(data),
+      const code = response.status
+      const reason = data?.error || `HTTP ${code}`
+      console.error(`[chat] ${API_ENDPOINT} returned ${code}.`, { code, error: reason })
+      throw new Error(
+        import.meta.env.DEV && data?.code === 'rate_limit_exceeded'
+          ? `AI is rate-limited (${code}). Please wait ~1 minute and try again.`
+          : `API error (${code})`,
       )
-      throw new Error(`API error (${response.status})`)
     }
 
     const content = data?.reply
@@ -124,6 +127,9 @@ export async function getBotReply(message, history = []) {
     return reply
   } catch (err) {
     console.error('[chat] getBotReply failed:', err?.message || err)
+    // In development, show the real reason so errors are surfaced instead of hidden.
+    // In production keep a clean, professional message.
+    if (import.meta.env.DEV) return `⚠️ ${err?.message || 'Unable to generate a response'}`
     return ERROR_REPLY
   }
 }
