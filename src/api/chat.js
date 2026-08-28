@@ -1,26 +1,14 @@
-const API_URL = 'https://api.groq.com/openai/v1/chat/completions'
-const MODEL = 'openai/gpt-oss-120b'
-const apiKey = import.meta.env.VITE_GROQ_API_KEY
+// MyChatbot API client.
+// The browser ONLY ever calls the same-origin /api/chat endpoint.
+// The actual Groq call and the secret API key live server-side:
+//   - Production: Vercel serverless function (api/chat.js)
+//   - Local dev:   the same api/chat.js handler served by the Vite dev server
+// The frontend never holds or references the secret key.
+
+const API_ENDPOINT = '/api/chat'
 const MAX_CONTEXT_MESSAGES = 12
 const REQUEST_TIMEOUT_MS = 20000
 
-const SYSTEM_PROMPT = `You are MyChatbot, a professional, knowledgeable, and friendly AI assistant.
-
-## How to respond
-- Answer the user's actual question directly and clearly. Give a short direct answer first, then explain in an organized way.
-- Use Markdown formatting to structure answers: headings (## and ###), bullet lists (-), numbered lists (1.), tables when comparing, inline code (\`code\`) and fenced code blocks with a language identifier for any code.
-- For programming questions include: a brief explanation, the key concepts, a code example, an explanation of the code, the expected output where useful, common mistakes, and best practices when appropriate.
-- For "how to" questions use: requirements, step-by-step instructions, code/commands where necessary, an explanation, common problems, and the final result.
-- For comparison questions use a Markdown table (for example with Feature | Option A | Option B).
-- For definition questions give: a definition, a simple explanation, key characteristics, an example, and real-world usage.
-- Adapt the length to the question: be concise for simple questions, detailed for complex technical ones.
-- Avoid generic filler such as "Ask me about...". Do not repeat the same information. Never give one-line generic answers to real questions.
-- Explain technical terms in simple language when the user seems to be learning.
-- Use the conversation history to understand follow-up questions (for example "what are its advantages?" refers to the previously discussed topic).
-- If you do not know the answer, say so honestly instead of guessing.
-- Never claim abilities you do not have.`
-
-const FALLBACK_REPLY = "I'm still learning. Could you please rephrase your question?"
 export const ERROR_REPLY = "Sorry, I couldn't generate a response right now. Please try again."
 const WELCOME_TEXT = 'Hi there! I am MyChatbot. How can I help you today?'
 
@@ -79,42 +67,39 @@ function buildContext(messages) {
     }))
 }
 
-async function fetchGroqReply(message, history) {
-  if (!apiKey) {
-    throw new Error('No API key configured')
-  }
-
+function withTimeout() {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  return { controller, timer }
+}
 
+/**
+ * POST the user message + history to the same-origin /api/chat endpoint.
+ * Returns the assistant reply text.
+ */
+async function requestReply(message, history) {
+  const { controller, timer } = withTimeout()
   try {
-    const response = await fetch(API_URL, {
+    const response = await fetch(API_ENDPOINT, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          ...history,
-          { role: 'user', content: message },
-        ],
-        temperature: 0.6,
-        max_tokens: 4096,
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history }),
       signal: controller.signal,
     })
 
+    const data = await response.json().catch(() => ({}))
     if (!response.ok) {
-      throw new Error(`Groq API error (${response.status})`)
+      console.error(
+        `[chat] ${API_ENDPOINT} returned ${response.status}. Body:`,
+        data?.error ?? JSON.stringify(data),
+      )
+      throw new Error(`API error (${response.status})`)
     }
 
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content
+    const content = data?.reply
     if (typeof content !== 'string' || !content.trim()) {
-      throw new Error('Empty response from Groq API')
+      console.error('[chat] /api/chat returned an empty reply.')
+      throw new Error('Empty response from API')
     }
     return content
   } finally {
@@ -131,15 +116,14 @@ export async function getBotReply(message, history = []) {
   const local = getLocalReply(message)
   if (local) return local
 
-  if (!apiKey) {
-    // No API configured — never pretend an AI backend exists.
-    return FALLBACK_REPLY
-  }
+  const ctx = buildContext(history)
 
   try {
-    return await fetchGroqReply(message, buildContext(history))
-  } catch {
-    // Network failure, timeout, rate limit or invalid response — never crash.
+    const reply = await requestReply(message, ctx)
+    console.info(`[chat] /api/chat reply OK (${reply.length} chars).`)
+    return reply
+  } catch (err) {
+    console.error('[chat] getBotReply failed:', err?.message || err)
     return ERROR_REPLY
   }
 }
